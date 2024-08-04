@@ -204,8 +204,7 @@ Definida como header <font color="red">\<mutex></font> de la librería Estándar
 |try_to_lock <span style="color:green;font-size:12px">(C++11)</span>|Intentar adquirir la propiedad del mutex sin bloquear <span style="color:green;font-size:12px">try_to_lock_t</span>|
 |adopt_lock <span style="color:green;font-size:12px">(C++11)</span>|Suponer que el hilo que llama ya tiene la propiedad del mutex <span style="color:green;font-size:12px">adopt_lock_t</span>|
 
-Estos 3 Tags se aplican a std::unique_lock y std::shared_lock.
-Y std::lock_guard solo acepta solo el Tag std::adopt_lock.
+Estos tres tags se aplican a `std::unique_lock` y `std::shared_lock`. Por otro lado, `std::lock_guard` solo acepta el tag `std::adopt_lock`. En ausencia de cualquiera de estos tags, `std::unique_lock`, `std::shared_lock`, y `std::lock_guard` adquirirán la propiedad del mutex de inmediato. Esta precisión es importante para entender las opciones de control de mutex en C++.
 
 | Funciones   | Descripción                     |
 | --------   |  --------                       |
@@ -412,7 +411,51 @@ t1 adquiere el bloqueo del std::timed_mutex porque no está bloqueado.
 Cuando t2 llama a `try_lock_until(abs_time)`, como t1 ya tiene el bloqueo, t2 intentará adquirir el bloqueo hasta que se alcance `abs_time` (10 segundos después del tiempo actual) o hasta que t1 libere el bloqueo, lo que ocurra primero.
 Como t1 no libera el bloqueo antes de que se alcance `abs_time`, `try_lock_until` en t2 devolverá false.
 Después de 20 segundos (simulando trabajo), t1 libera el bloqueo llamando a unlock().
+- **Usando la clase `std::recursive_mutex`:** Proporciona una facilidad de exclusión mutua que puede ser bloqueada de forma recursiva por el mismo thread
+```cpp
+#include <iostream>
+#include <thread>
+#include <mutex>
 
+std::recursive_mutex rmutex;
+
+void recursive_function(int count) {
+    if (count < 0) return;
+    
+    // Bloqueo del mutex recursivo
+    rmutex.lock();
+    
+    std::cout << "Count: " << count << " - Thread ID: " << std::this_thread::get_id() << std::endl;
+    
+    // Llamada recursiva
+    recursive_function(count - 1);
+    
+    // Desbloqueo del mutex recursivo
+    rmutex.unlock();
+}
+
+int main() {
+    std::thread t1(recursive_function, 3);
+    std::thread t2(recursive_function, 3);
+    
+    t1.join();
+    t2.join();
+    
+    return 0;
+}
+```
+Imprime:
+```
+Count: 3 - Thread ID: 140737345746496
+Count: 2 - Thread ID: 140737345746496
+Count: 1 - Thread ID: 140737345746496
+Count: 0 - Thread ID: 140737345746496
+Count: 3 - Thread ID: 140737337353792
+Count: 2 - Thread ID: 140737337353792
+Count: 1 - Thread ID: 140737337353792
+Count: 0 - Thread ID: 140737337353792
+```
+Usando esta clase nos asegura que el mismo thread llamando de forma recursiva a la funcion no se este bloqueando como parte de la misma operacion.
 - **Usando la clase `std::lock_guard`:** sigue el principio de RAII para garantizar la adquisición y liberación segura de un mutex, lo que simplifica el código y mejora la robustez y la seguridad en entornos multihilo.
 
     ```cpp
@@ -469,8 +512,9 @@ Después de 20 segundos (simulando trabajo), t1 libera el bloqueo llamando a unl
     }
 
     void threadFunc3() {
-        std::unique_lock<std::mutex> lock(mtx, std::adopt_lock); // Utilización de std::adopt_lock
-        // Se asume que el mutex ya está bloqueado por otro hilo
+        mtx.lock(); // Bloquea el mutex manualmente
+        std::unique_lock<std::mutex> lock(mtx, std::adopt_lock); // Adopcion del bloqueo por la linea anterior 
+        // unique_lock asume la liberacion de recursos
         shared_data++;
     }
 
@@ -619,8 +663,145 @@ La clase `std::atomic` es una herramienta para manipular valores atómicos en un
 
 | Constantes                       | Descripción                       |
 | -----------                 | -----------                        |
-|is_always_lock_free `[static]`<span style="color:green;font-size:12px">(C++20)</span> | indica que el tipo siempre está libre de bloqueo <span style="color:green;font-size:12px">(función miembro pública)</span>|
+|is_always_lock_free `[static]`<span style="color:green;font-size:12px">(C++17)</span> | indica que el tipo siempre está libre de bloqueo <span style="color:green;font-size:12px">(función miembro pública)</span>|
 
+Repasando:
+```cpp
+#include <atomic>
+#include <thread>
+#include <chrono>
+
+int main() {
+    // 1. Constructor y asignación
+    {
+        std::atomic<int> atom(10);
+        atom = 20;
+        
+        // Resultado:
+        // atom.load() = 20
+    }
+
+    // 2. load() y store()
+    {
+        std::atomic<int> atom(5);
+
+        int valor = atom.load();
+        // Resultado:
+        // valor = 5
+
+        atom.store(10);
+        // Resultado:
+        // atom.load() = 10
+    }
+
+    // 3. exchange()
+    {
+        std::atomic<int> atom(5);
+
+        int valor_anterior = atom.exchange(10);
+        // Resultado:
+        // valor_anterior = 5
+        // atom.load() = 10
+    }
+
+    // 4. compare_exchange_strong()
+    {
+        std::atomic<int> atom(5);
+        int esperado = 5;
+        bool exito = atom.compare_exchange_strong(esperado, 10);
+
+        // Resultado:
+        // exito = true  (valor esperaro es igual al valor anterior)
+        // atom.load() = 10
+    }
+
+    // 5. fetch_add() y fetch_sub()
+    {
+        std::atomic<int> atom(5);
+
+        int valor_previo = atom.fetch_add(3);
+        // Resultado:
+        // valor_previo = 5
+        // atom.load() = 8
+
+        valor_previo = atom.fetch_sub(2);
+        // Resultado:
+        // valor_previo = 8
+        // atom.load() = 6
+    }
+
+    // 6. Operadores aritméticos atómicos
+    {
+        std::atomic<int> atom(5);
+
+        atom += 3;
+        // Resultado:
+        // atom.load() = 8
+
+        atom -= 2;
+        // Resultado:
+        // atom.load() = 6
+
+        ++atom;
+        // Resultado:
+        // atom.load() = 7
+
+        --atom;
+        // Resultado:
+        // atom.load() = 6
+    }
+
+    // 7. is_lock_free()
+    {
+        std::atomic<int> atom;
+
+        bool es_lock_free = atom.is_lock_free();
+        // Resultado:
+        // es_lock_free es generalmente true en la mayoría de las arquitecturas modernas
+    }
+
+    // 8. compare_exchange_weak()
+    {
+        std::atomic<int> atom(5);
+        int esperado = 5;
+        bool exito = atom.compare_exchange_weak(esperado, 10);
+
+        // Resultado:
+        // exito = true (valor esperado es igual al valor anterior)
+        // atom.load() = 10
+        // esperado = 5
+
+        // Intentar de nuevo, esta vez debería fallar
+        esperado = 5;
+        exito = atom.compare_exchange_weak(esperado, 15);
+
+        // Resultado:
+        // exito = false (valor esperado no es igual al valor actual)
+        // atom.load() = 10 (sin cambios)
+        // esperado = 10 (actualizado al valor actual de atom)
+
+        // Uso típico en un bucle de espera
+        atom.store(0);
+        int valor_deseado = 1;
+
+        std::thread t([&atom]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            atom.store(1);
+        });
+
+        while (!atom.compare_exchange_weak(valor_deseado, 2)) {
+            valor_deseado = 1; // Reiniciar el valor esperado en cada iteración
+        }
+
+        t.join();
+
+        // Resultado:
+        // atom.load() = 2
+    }
+
+    return 0;
+}
+```
 Un ejemplo sencillo donde dos threads incrementan una variable atómica global
 ```cpp
 #include <iostream>
@@ -659,7 +840,7 @@ Para acceder al valor de counter se puede por ejemplo
 std::cout << "Counter: " << counter << '\n';
 std::cout << "Counter: " << counter.load() << '\n';
 ```
-Para modificar el valor de counter se puede tambié
+Para modificar el valor de counter se puede también
 ```cpp
 counter = 100;
 counter.store(100);
@@ -689,7 +870,7 @@ Imprime:
 Old value: 0, New value: 1
 Old value: 1, New value: 100
 ```
-Las operaciones atómicas como `fetch_add`, `fetch_sub`, `exchange`, y otras similares, modifican el valor de la variable atómica y devuelven su valor original en una sola operación atómica. Por lo tanto, cuando haces algo como int `old_value = counter.fetch_add(1);`, estás asignando a `old_valu`e el valor original de `counter` antes de que se incremente.
+Las operaciones atómicas como `fetch_add`, `fetch_sub`, `exchange`, y otras similares, modifican el valor de la variable atómica y devuelven su valor original en una sola operación atómica. Por lo tanto, cuando haces algo como int `old_value = counter.fetch_add(1);`, estás asignando a `old_value` el valor original de `counter` antes de que se incremente.
 
 - **Orden y Modelo de memoria:**
 
@@ -716,7 +897,7 @@ Las operaciones atómicas como `fetch_add`, `fetch_sub`, `exchange`, y otras sim
         counter.exchange(100, std::memory_order_acq_rel).
         ```
 - **Fences o barreras de memoria:** Las barreras de memoria, también conocidas como “memory fences” o “memory barriers”,son mecanismos que previenen que ciertas optimizaciones reorganicen las operaciones de lectura y escritura de manera que puedan causar problemas en un entorno multihilo.
-    Un ejemplo de como usar `std::atomic_thread_fenc`e y `std::atomic_signal_fence` para crear barreras de memoria.
+    Un ejemplo de como usar `std::atomic_thread_fence` y `std::atomic_signal_fence` para crear barreras de memoria.
     ```cpp
     #include <atomic>
     #include <thread>
@@ -1031,7 +1212,7 @@ int main() {
 
 ### 9. Usando header \<future>
 
-Las clases y funciones de la biblioteca estándar de C++ en el encabezado <future> proporcionan una interfaz para la programación concurrente y la gestión de tareas asíncronas. En particular, permiten crear y manipular objetos future y promise, que se utilizan para transferir datos y resultados entre diferentes hilos y contextos de ejecución.
+Las clases y funciones de la libreria estándar de C++ en el header \<future> proporcionan una interfaz para la programación concurrente y la gestión de tareas asíncronas. En particular, permiten crear y manipular objetos future y promise, que se utilizan para transferir datos y resultados entre diferentes hilos y contextos de ejecución.
 
 |Contenido      |Descripción |
 | --------    | -----------|
@@ -1055,7 +1236,7 @@ Las clases y funciones de la biblioteca estándar de C++ en el encabezado <futur
 | -------- | -----------|
 |get|devuelve el resultado <span style="color:green;font-size:12px">(función miembro pública)</span>|
 |wait|espera a que el resultado esté disponible <span style="color:green;font-size:12px">(función miembro pública)</span>|
-|share|transfiere el estado compartido desde *this a un shared_future y lo devuelve <span style="color:green;font-size:12px">(función miembro pública)</span>|
+|share <span style="color:green;font-size:12px">(std::future)</span>|transfiere el estado compartido desde `*this` a un shared_future y lo devuelve <span style="color:green;font-size:12px">(función miembro pública)</span>|
 |valid|verifica si el future tiene un estado compartido <span style="color:green;font-size:12px">(función miembro pública)</span>|
 
 - **Usando la clase `std::promise`:**
@@ -1079,7 +1260,7 @@ Las clases y funciones de la biblioteca estándar de C++ en el encabezado <futur
 
 - **Ejemplos**
 
-Tanto el objeto future como promise pueden ser pasarse como argumento  a una función que se ejecutará en segundo plano.
+Tanto el objeto future como promise pueden ser pasados como argumento  a una función que se ejecutará en segundo plano.
 
 Pasando como atributo referencia a rvalue:
 ```cpp

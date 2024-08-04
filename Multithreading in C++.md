@@ -199,8 +199,7 @@ Defined as <font color="red">\<mutex></font> header in the Standard Library sinc
 |try_to_lock <span style="color:green;font-size:12px">(C++11)</span>|Try to acquire ownership of the mutex without blocking <span style="color:green;font-size:12px">try_to_lock_t</span>|
 |adopt_lock <span style="color:green;font-size:12px">(C++11)</span>|Assume the calling thread already has ownership of the mutex <span style="color:green;font-size:12px">adopt_lock_t</span>|
 
-These 3 tags apply to `std::unique_lock` and `std::shared_lock`. 
-`std::lock_guard` accepts only the `std::adopt_lock` tag.
+These three tags apply to `std::unique_lock` and `std::shared_lock`. On the other hand, `std::lock_guard` only accepts the `std::adopt_lock` tag. In the absence of any of these tags, `std::unique_lock`, `std::shared_lock`, and `std::lock_guard` will acquire ownership of the mutex immediately. This distinction is important for understanding mutex control options in C++.
 
 |Functions   | Description                     |
 | --------   |  --------                       |
@@ -282,7 +281,7 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 ```
-- **Using the `std::timed_mutex class`:**
+- **Using the `std::timed_mutex` class:**
     Similar to `std::mutex`, but allows lock acquisition with timing.
 
 | Members                       | Description                       |
@@ -404,7 +403,51 @@ t1 acquires the lock of the `std::timed_mutex` because it is not locked initiall
 When t2 calls `try_lock_until(abs_time)`, since t1 already holds the lock, t2 attempts to acquire the lock until `abs_time` is reached (10 seconds after the current time) or until t1 releases the lock, whichever happens first.
 Since t1 does not release the lock before `abs_time` is reached, `try_lock_until` in t2 returns false.
 After 20 seconds (simulating work), t1 releases the lock by calling `unlock()`.
+- **Using `std::recursive_mutex` class:** Provides mutual exclusion facility which can be locked recursively by the same thread
+```cpp
+#include <iostream>
+#include <thread>
+#include <mutex>
 
+std::recursive_mutex rmutex;
+
+void recursive_function(int count) {
+    if (count < 0) return;
+    
+    // Lock the recursive mutex
+    rmutex.lock();
+    
+    std::cout << "Count: " << count << " - Thread ID: " << std::this_thread::get_id() << std::endl;
+    
+    // call recursive
+    recursive_function(count - 1);
+    
+    // Unlock the recursive mutex
+    rmutex.unlock();
+}
+
+int main() {
+    std::thread t1(recursive_function, 3);
+    std::thread t2(recursive_function, 3);
+    
+    t1.join();
+    t2.join();
+    
+    return 0;
+}
+```
+Output:
+```
+Count: 3 - Thread ID: 140737345746496
+Count: 2 - Thread ID: 140737345746496
+Count: 1 - Thread ID: 140737345746496
+Count: 0 - Thread ID: 140737345746496
+Count: 3 - Thread ID: 140737337353792
+Count: 2 - Thread ID: 140737337353792
+Count: 1 - Thread ID: 140737337353792
+Count: 0 - Thread ID: 140737337353792
+```
+Using this class ensures that the same thread recursively calling the function is not blocking as part of the same operation.
 - **Using the `std::lock_guard` class:** follows the RAII principle to ensure safe acquisition and release of a mutex, simplifying the code and improving robustness and security in multithreaded environments.
 
     ```cpp
@@ -461,8 +504,9 @@ After 20 seconds (simulating work), t1 releases the lock by calling `unlock()`.
     }
 
     void threadFunc3() {
-        std::unique_lock<std::mutex> lock(mtx, std::adopt_lock); // Using std::adopt_lock
-        // Assumes that the mutex is already locked by another thread
+        mtx.lock(); // Lock the mutex manualy
+        std::unique_lock<std::mutex> lock(mtx, std::adopt_lock); // Adoption of the lock by the previous line
+        // unique_lock assumes the release of resources 
         shared_data++;
     }
 
@@ -609,8 +653,145 @@ The `std::atomic` class is a tool for manipulating atomic values in a multithrea
 
 | Contants                       | Description                       |
 | -----------                 | -----------                        |
-|is_always_lock_free `[static]`<span style="color:green;font-size:12px">(C++20)</span> | indicates that the type is always lock-free<span style="color:green;font-size:12px">(public member function)</span>|
+|is_always_lock_free `[static]`<span style="color:green;font-size:12px">(C++17)</span> | indicates that the type is always lock-free<span style="color:green;font-size:12px">(public member function)</span>|
 
+Reviewing:
+```cpp
+#include <atomic>
+#include <thread>
+#include <chrono>
+
+int main() {
+    // 1. Constructor and assignment
+    {
+        std::atomic<int> atom(10);
+        atom = 20;
+        
+        // Result:
+        // atom.load() = 20
+    }
+
+    // 2. load() and store()
+    {
+        std::atomic<int> atom(5);
+
+        int value = atom.load();
+        // Result:
+        // value = 5
+
+        atom.store(10);
+        // Result:
+        // atom.load() = 10
+    }
+
+    // 3. exchange()
+    {
+        std::atomic<int> atom(5);
+
+        int previous_value = atom.exchange(10);
+        // Result:
+        // previous_value = 5
+        // atom.load() = 10
+    }
+
+    // 4. compare_exchange_strong()
+    {
+        std::atomic<int> atom(5);
+        int expected = 5;
+        bool success = atom.compare_exchange_strong(expected, 10);
+
+        // Result:
+        // success = true (expected value is equal to previous value)
+        // atom.load() = 10
+    }
+
+    // 5. fetch_add() and fetch_sub()
+    {
+        std::atomic<int> atom(5);
+
+        int previous_value = atom.fetch_add(3);
+        // Result:
+        // previous_value = 5
+        // atom.load() = 8
+
+        previous_value = atom.fetch_sub(2);
+        // Result:
+        // previous_value = 8
+        // atom.load() = 6
+    }
+
+    // 6. Atomic arithmetic operators
+    {
+        std::atomic<int> atom(5);
+
+        atom += 3;
+        // Result:
+        // atom.load() = 8
+
+        atom -= 2;
+        // Result:
+        // atom.load() = 6
+
+        ++atom;
+        // Result:
+        // atom.load() = 7
+
+        --atom;
+        // Result:
+        // atom.load() = 6
+    }
+
+    // 7. is_lock_free()
+    {
+        std::atomic<int> atom;
+
+        bool is_lock_free = atom.is_lock_free();
+        // Result:
+        // is_lock_free is generally true on most modern architectures
+    }
+
+    // 8. compare_exchange_weak()
+    {
+        std::atomic<int> atom(5);
+        int expected = 5;
+        bool success = atom.compare_exchange_weak(expected, 10);
+
+        // Result:
+        // success = true (expected value is equal to previous value)
+        // atom.load() = 10
+        // expected = 5
+
+        // Try again, this time it should fail
+        expected = 5;
+        success = atom.compare_exchange_weak(expected, 15);
+
+        // Result:
+        // success = false (expected value is not equal to current value)
+        // atom.load() = 10 (unchanged)
+        // expected = 10 (updated to the current value of atom)
+
+        // Typical usage in a spin-wait loop
+        atom.store(0);
+        int desired_value = 1;
+
+        std::thread t([&atom]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            atom.store(1);
+        });
+
+        while (!atom.compare_exchange_weak(desired_value, 2)) {
+            desired_value = 1; // Reset expected value in each iteration
+        }
+
+        t.join();
+
+        // Result:
+        // atom.load() = 2
+    }
+
+    return 0;
+}
+```
 An esasy example where two threads increase a atomic global variable
 ```cpp
 #include <iostream>
@@ -706,7 +887,7 @@ Atomic operations like `fetch_add`, `fetch_sub`, `exchange`, and others modify t
         ```
 - **Memory Fences or Barriers:** Memory fences, also known as "memory fences" or "memory barriers," are     mechanisms that prevent certain optimizations from reordering read and write operations in ways that could  cause issues in a multithreaded environment.
 
-    Here's an example of how to use std::atomic_thread_fence and std::atomic_signal_fence to create memory barriers:
+    Here's an example of how to use `std::atomic_thread_fence` and `std::atomic_signal_fence` to create memory barriers:
     ```cpp
     #include <atomic>
     #include <thread>
@@ -1020,7 +1201,7 @@ int main(int argc, char* argv[]) {
 
 ### 9. Using the \<future> header
 
-The classes and functions in the C++ standard library header <future> provide an interface for concurrent programming and managing asynchronous tasks. In particular, they allow creating and manipulating future and promise objects, which are used to transfer data and results between different threads and execution contexts.
+The classes and functions in the C++ standard library header \<future> provide an interface for concurrent programming and managing asynchronous tasks. In particular, they allow creating and manipulating future and promise objects, which are used to transfer data and results between different threads and execution contexts.
 
 |Content      |Description |
 | --------    | -----------|
@@ -1046,7 +1227,7 @@ The classes and functions in the C++ standard library header <future> provide an
 | --------    | -----------|
 |get|returns the result <span style="color:green;font-size:12px">(public member function)</span>|
 |wait|waits for the result to become available <span style="color:green;font-size:12px">(public member function)</span>|
-|share|transfers the shared state from *this to a shared_future and returns it <span style="color:green;font-size:12px">(public member function)</span>|
+|share <span style="color:green;font-size:12px">(std::future)</span>|transfers the shared state from `*this` to a shared_future and returns it <span style="color:green;font-size:12px">(public member function)</span>|
 |valid|checks if the future has a shared state <span style="color:green;font-size:12px">(public member function)</span>|
 
 - **Using the `std::promise` class:**
